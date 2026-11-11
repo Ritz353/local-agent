@@ -1,0 +1,9 @@
+{
+  "ssh_host": "user@my-server",
+  "services": {
+    "Website": "https://example.com",
+    "Dashboard": "http://my-server:3000",
+    "Uptime monitor": "http://my-server:3001",
+    "AI chat": "http://my-server:3002"
+  }
+}

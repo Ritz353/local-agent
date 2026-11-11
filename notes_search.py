@@ -19,6 +19,10 @@ INDEX_FILE = Path(__file__).with_name(".notes_index.json")
 CHUNK_CHARS = 1000
 OVERLAP = 150
 
+# Run the small embedding model on the CPU (num_gpu=0) so it never competes with the chat
+# model for GPU memory. Otherwise Ollama swaps models in and out of VRAM on every search.
+EMBED_OPTIONS = {"num_gpu": 0} if os.environ.get("EMBED_ON_GPU") != "1" else {}
+
 # nomic-embed-text was trained with these task prefixes; they improve retrieval quality.
 DOC_PREFIX = "search_document: "
 QUERY_PREFIX = "search_query: "
@@ -68,7 +72,7 @@ def build_index(client, notes, verbose: bool = True) -> dict:
             continue
         # Put the note's title in front of every chunk so each one keeps its context.
         inputs = [f"{DOC_PREFIX}{path.stem}\n{c}" for c in chunks]
-        vectors = client.embed(model=EMBED_MODEL, input=inputs).embeddings
+        vectors = client.embed(model=EMBED_MODEL, input=inputs, options=EMBED_OPTIONS).embeddings
         notes_index[key] = {"name": path.stem, "mtime": mtime, "chunks": chunks, "vectors": vectors}
         if verbose:
             print(f"  indexed {path.stem} ({len(chunks)} chunks)")
@@ -80,7 +84,7 @@ def build_index(client, notes, verbose: bool = True) -> dict:
 
 def semantic_hits(client, index: dict, query: str, top: int = 5) -> list[tuple[float, str, str]]:
     """Return (score, note name, best chunk) for the notes most similar in meaning to the query."""
-    qvec = client.embed(model=EMBED_MODEL, input=f"{QUERY_PREFIX}{query}").embeddings[0]
+    qvec = client.embed(model=EMBED_MODEL, input=f"{QUERY_PREFIX}{query}", options=EMBED_OPTIONS).embeddings[0]
     best = {}  # note name -> (score, chunk)
     for note in index["notes"].values():
         for chunk, vec in zip(note["chunks"], note["vectors"]):

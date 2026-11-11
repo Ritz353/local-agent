@@ -1,5 +1,6 @@
 import agent
 import notes_search
+import homelab
 
 
 def make_vault(tmp_path):
@@ -56,3 +57,21 @@ def test_cosine():
     assert abs(notes_search.cosine([1, 0], [1, 0]) - 1.0) < 1e-9
     assert abs(notes_search.cosine([1, 0], [0, 1])) < 1e-9
     assert notes_search.cosine([0, 0], [1, 1]) == 0.0
+
+
+def test_check_homelab_reports_up_and_down(monkeypatch):
+    monkeypatch.setattr(homelab, "load_config", lambda: {"ssh_host": "x", "services": {"A": "http://a", "B": "http://b"}})
+    monkeypatch.setattr(homelab, "probe", lambda url, timeout=5: (True, "HTTP 200", 12) if url == "http://a"
+                        else (False, "unreachable: timeout", None))
+    result = homelab.check_homelab()
+    assert result.startswith("1/2 services up")
+    assert "UP: A (HTTP 200, 12 ms)" in result
+    assert "DOWN: B (unreachable: timeout)" in result
+
+
+def test_backup_status_handles_ssh_failure(monkeypatch):
+    class Failed:
+        returncode, stdout, stderr = 255, "", "Permission denied (publickey)."
+    monkeypatch.setattr(homelab, "load_config", lambda: {"ssh_host": "x", "services": {}})
+    monkeypatch.setattr(homelab.subprocess, "run", lambda *a, **k: Failed())
+    assert "Permission denied" in homelab.get_backup_status()

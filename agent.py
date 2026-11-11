@@ -4,12 +4,14 @@ from pathlib import Path
 
 import ollama
 
+import homelab
 import notes_search
 
 client = ollama.Client(host="http://127.0.0.1:11434")
 MODEL = os.environ.get("AGENT_MODEL", "qwen3.5:9b")   # override to compare models
 NUM_CTX = int(os.environ.get("AGENT_NUM_CTX", "8192"))
 MAX_STEPS = 6  # most model calls allowed per question
+NOTE_CHARS = 3000  # max characters returned by read_note
 VAULT = Path(os.environ.get("OBSIDIAN_VAULT", r"C:\Users\sebas\Documents\Obsidian\Work"))
 SKIP_DIRS = {".venv", ".obsidian", ".trash", "__pycache__", "node_modules", ".git"}
 SEARCH_MODE = os.environ.get("SEARCH_MODE", "hybrid")  # keyword | semantic | hybrid
@@ -21,6 +23,8 @@ SYSTEM_PROMPT = (
     "'what did I write'). For general knowledge questions, answer directly without tools. "
     "Exception: ALWAYS use the multiply tool for multiplication or percentages (never do the "
     "math in your head), and ALWAYS use get_current_time for anything about the current date or time. "
+    "For questions about his homelab server (ratlab), whether his services or website are up, "
+    "or his backups, use check_homelab or get_backup_status. "
     "When you do use his notes: use search_notes, then read_note on the most relevant result, "
     "and say which note(s) you used. If two searches don't find anything relevant, stop "
     "searching and tell him his notes don't seem to cover it. Never guess or invent what "
@@ -137,7 +141,12 @@ def read_note(name: str) -> str:
     """
     for path in all_notes():
         if path.stem.lower() == name.lower():
-            return path.read_text(encoding="utf-8", errors="ignore")[:6000]
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            # Keep reads short so several notes still fit in the model's context window;
+            # otherwise the oldest messages (including the question!) get pushed out.
+            if len(text) > NOTE_CHARS:
+                return text[:NOTE_CHARS] + "\n\n[...note cut off here...]"
+            return text
     return f"No note named '{name}'. Use search_notes to find the right name."
 
 
@@ -146,6 +155,8 @@ TOOLS = {
     "multiply": multiply,
     "search_notes": search_notes,
     "read_note": read_note,
+    "check_homelab": homelab.check_homelab,
+    "get_backup_status": homelab.get_backup_status,
 }
 
 
@@ -179,7 +190,7 @@ def run_agent(question: str, trace: list | None = None, verbose: bool = True) ->
         messages.append(response.message)
 
         if last_step or not response.message.tool_calls:
-            return response.message.content or "I couldn't come up with an answer."
+            return response.message.content or "I looked, but I couldn't find a clear answer to that."
 
         for call in response.message.tool_calls:
             name = call.function.name

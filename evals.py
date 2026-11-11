@@ -72,6 +72,13 @@ CASES = [
      "expect_any": ["couldn't", "could not", "no note", "not find", "didn't find", "did not find", "don't contain",
                     "doesn't contain", "do not contain", "no information", "not mention", "no mention", "don't have", "don't appear", "doesn't appear", "not appear", "don't seem", "doesn't seem", "not seem", "no record", "nothing about", "not cover", "don't cover", "doesn't cover", "wasn't able to find", "was not able to find", "unable to find", "weren't able to find", "not recorded"]},
 
+    # --- homelab: live checks the model can't know on its own
+    {"cat": "homelab", "q": "Is my website up right now?", "tools": ["check_homelab"]},
+    {"cat": "homelab", "q": "Are all my homelab services running?", "tools": ["check_homelab"]},
+    {"cat": "homelab", "q": "Is Uptime Kuma online on ratlab?", "tools": ["check_homelab"]},
+    {"cat": "homelab", "q": "When did my last backup run, and did it upload to Google Drive?", "tools": ["get_backup_status"],
+     "expect_any": ["backup", "saved", "uploaded", "drive"]},
+
     # --- multi-step: needs more than one tool
     {"cat": "multi-step", "q": "What day is it, and what's 12 times 34?", "tools": ["get_current_time", "multiply"], "expect": ["408"]},
     {"cat": "multi-step", "q": "Tell me the current time and what 7 times 8 is.", "tools": ["get_current_time", "multiply"], "expect": ["56"]},
