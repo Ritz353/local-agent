@@ -41,16 +41,44 @@ python agent.py
 
 Set the `OBSIDIAN_VAULT` environment variable to point at your own vault.
 
-## Tests
+## Tests and evaluation
 
 ```
-pytest -v
+pytest -v          # unit tests
+python evals.py    # agent evaluation (needs Ollama running)
 ```
 
-The tests build a small fake vault in a temporary folder, so they never touch real notes.
+The unit tests build a small fake vault in a temporary folder, so they never touch real notes.
+
+## Evaluation
+
+`evals.py` runs a 35-question suite through the agent and scores **tool choice** (did it call the tools it needed, and none when none were needed) and **answer accuracy** (does the answer contain the known fact). Categories include exact math, general knowledge that should need no tools, questions about my notes, hard note questions (misspellings, no obvious keywords), multi-step questions, and **honesty checks**: questions my notes can't answer, where the agent must say so instead of inventing something.
+
+Results with `qwen3.5:9b`, averaged over 3 runs per question (`python evals.py --repeat 3`):
+
+| Category | Passed |
+|---|---|
+| Time | 12/12 |
+| Math | 18/18 |
+| No-tool (general knowledge) | 18/18 |
+| Notes | 27/27 |
+| Notes – hard | 11/15 |
+| Honesty | 6/6 |
+| Multi-step | 9/9 |
+| **Overall** | **96%** (avg 9.7 s per question) |
+
+**How it got there:** the first run scored 86%. Reading the failures showed three causes:
+1. The system prompt made the agent search my notes even for general questions, so I limited note searches to questions about *my* notes.
+2. On questions with no answer in my notes, it kept searching until it hit the step limit, so I added a search budget and a final step that removes the tools and forces an answer.
+3. The eval itself rejected correct "I couldn't find it" answers phrased in ways I hadn't listed, so I fixed the checker.
+
+The prompt fix caused a regression (the agent started doing multiplication in its head), which the eval caught. An explicit rule to always use the math and time tools fixed it.
+
+The remaining misses are hard note questions, such as a misspelled "twos compliment", which keyword search can't match. That's the next upgrade.
+
+**Performance note:** at first, 12% of the model spilled from the 8 GB GPU onto the CPU, which bottlenecked everything. Enabling flash attention and an 8-bit KV cache in Ollama (`OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`) brought it to 100% GPU.
 
 ## Next steps
 
-- Semantic (embedding-based) search instead of keywords
-- An evaluation set to measure how often the agent picks the right tool
+- Semantic (embedding-based) search instead of keywords, measured against the notes-hard category
 - More tools, such as checking the status of my homelab services

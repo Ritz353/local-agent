@@ -5,16 +5,23 @@ from pathlib import Path
 import ollama
 
 client = ollama.Client(host="http://127.0.0.1:11434")
-MODEL = "qwen3.5:9b"
+MODEL = os.environ.get("AGENT_MODEL", "qwen3.5:9b")   # override to compare models
+NUM_CTX = int(os.environ.get("AGENT_NUM_CTX", "8192"))
+MAX_STEPS = 6  # most model calls allowed per question
 VAULT = Path(os.environ.get("OBSIDIAN_VAULT", r"C:\Users\sebas\Documents\Obsidian\Work"))
 SKIP_DIRS = {".venv", ".obsidian", ".trash", "__pycache__", "node_modules", ".git"}
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant for Wilfredo, a computer science student. "
-    "You can search and read his Obsidian notes. When a question is about his classes, "
-    "notes, projects, or anything he has written, first use search_notes, then use "
-    "read_note on the most relevant result before answering. Always say which note(s) "
-    "you used. If the notes don't contain the answer, say so instead of guessing."
+    "You can search and read his Obsidian notes, but only do that when he asks about HIS "
+    "notes, classes, projects, or something he wrote (for example 'my notes', 'my lecture', "
+    "'what did I write'). For general knowledge questions, answer directly without tools. "
+    "Exception: ALWAYS use the multiply tool for multiplication or percentages (never do the "
+    "math in your head), and ALWAYS use get_current_time for anything about the current date or time. "
+    "When you do use his notes: use search_notes, then read_note on the most relevant result, "
+    "and say which note(s) you used. If two searches don't find anything relevant, stop "
+    "searching and tell him his notes don't seem to cover it. Never guess or invent what "
+    "his notes say."
 )
 
 
@@ -100,28 +107,43 @@ TOOLS = {
 
 # ---------- THE AGENT LOOP ----------
 
-def run_agent(question: str) -> str:
+def run_agent(question: str, trace: list | None = None, verbose: bool = True) -> str:
+    """Answer a question, calling tools as needed.
+
+    If a `trace` list is passed in, the name of every tool the model calls is
+    appended to it (the evaluation script uses this to score tool choice).
+    """
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
 
-    for step in range(6):  # safety limit
+    for step in range(MAX_STEPS):  # safety limit
+        last_step = step == MAX_STEPS - 1
+        if last_step:
+            # Out of tool calls: take the tools away and make it answer with what it has,
+            # instead of quitting with no answer.
+            messages.append({"role": "system", "content":
+                             "You have used all your tool calls. Answer now using what you found, "
+                             "or say clearly that you couldn't find it."})
         response = client.chat(
             model=MODEL,
             messages=messages,
-            tools=list(TOOLS.values()),
-            options={"num_ctx": 8192},  # room for note text in the conversation
+            tools=None if last_step else list(TOOLS.values()),
+            options={"num_ctx": NUM_CTX},  # room for note text in the conversation
         )
         messages.append(response.message)
 
-        if not response.message.tool_calls:
-            return response.message.content
+        if last_step or not response.message.tool_calls:
+            return response.message.content or "I couldn't come up with an answer."
 
         for call in response.message.tool_calls:
             name = call.function.name
             args = call.function.arguments
-            print(f"  [tool] {name}({args})")
+            if trace is not None:
+                trace.append(name)
+            if verbose:
+                print(f"  [tool] {name}({args})")
             try:
                 result = TOOLS[name](**args)
             except Exception as e:
