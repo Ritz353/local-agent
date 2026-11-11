@@ -4,12 +4,15 @@ from pathlib import Path
 
 import ollama
 
+import notes_search
+
 client = ollama.Client(host="http://127.0.0.1:11434")
 MODEL = os.environ.get("AGENT_MODEL", "qwen3.5:9b")   # override to compare models
 NUM_CTX = int(os.environ.get("AGENT_NUM_CTX", "8192"))
 MAX_STEPS = 6  # most model calls allowed per question
 VAULT = Path(os.environ.get("OBSIDIAN_VAULT", r"C:\Users\sebas\Documents\Obsidian\Work"))
 SKIP_DIRS = {".venv", ".obsidian", ".trash", "__pycache__", "node_modules", ".git"}
+SEARCH_MODE = os.environ.get("SEARCH_MODE", "hybrid")  # keyword | semantic | hybrid
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant for Wilfredo, a computer science student. "
@@ -56,15 +59,8 @@ def all_notes():
             yield path
 
 
-def search_notes(query: str) -> str:
-    """Search Wilfredo's Obsidian notes by keywords and list the best matching notes.
-
-    Args:
-        query: A few keywords describing what to look for, e.g. "two's complement"
-
-    Returns:
-        The names of the most relevant notes with a short snippet from each.
-    """
+def keyword_hits(query: str) -> list[tuple[float, str, str]]:
+    """Rank notes by how often the query's words appear (title matches count extra)."""
     words = [w for w in query.lower().split() if len(w) > 2] or [query.lower()]
     results = []
     for path in all_notes():
@@ -77,9 +73,57 @@ def search_notes(query: str) -> str:
             snippet = " ".join(text[max(0, hit - 120): hit + 200].split())
             results.append((score, path.stem, snippet))
     results.sort(reverse=True)
-    if not results:
-        return "No notes matched those keywords."
-    return "\n\n".join(f"NOTE: {name}\n...{snip}..." for _, name, snip in results[:5])
+    return results
+
+
+def format_hits(hits) -> str:
+    if not hits:
+        return "No notes matched that search."
+    return "\n\n".join(f"NOTE: {name}\n...{' '.join(snip.split())[:320]}..." for _, name, snip in hits)
+
+
+def keyword_search(query: str) -> str:
+    """Keyword-only search (the original version, kept for comparison and tests)."""
+    hits = keyword_hits(query)
+    return format_hits(hits[:5]) if hits else "No notes matched those keywords."
+
+
+_index = None
+
+
+def get_index():
+    """Build (or refresh) the embedding index the first time it's needed."""
+    global _index
+    if _index is None:
+        _index = notes_search.build_index(client, all_notes())
+    return _index
+
+
+def search_notes(query: str) -> str:
+    """Search Wilfredo's Obsidian notes and list the best matching notes.
+
+    Args:
+        query: What to look for, in a few words, e.g. "two's complement"
+
+    Returns:
+        The names of the most relevant notes with a short snippet from each.
+    """
+    if SEARCH_MODE == "keyword":
+        return keyword_search(query)
+    semantic = notes_search.semantic_hits(client, get_index(), query, top=5)
+    if SEARCH_MODE == "semantic":
+        return format_hits(semantic)
+    # hybrid: the top meaning-based matches, plus strong keyword matches they missed
+    # (exact keywords still matter for things like "Lecture 11" or "Ch 2").
+    merged = semantic[:4]
+    names = {name for _, name, _ in merged}
+    for hit in keyword_hits(query):
+        if len(merged) >= 6:
+            break
+        if hit[1] not in names:
+            merged.append(hit)
+            names.add(hit[1])
+    return format_hits(merged)
 
 
 def read_note(name: str) -> str:

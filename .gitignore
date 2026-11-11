@@ -2,3 +2,4 @@
 __pycache__/
 .pytest_cache/
 eval_results_*.json
+.notes_index.json
